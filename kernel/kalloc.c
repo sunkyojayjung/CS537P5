@@ -34,8 +34,11 @@ kinit(void)
 
   initlock(&kmem.lock, "kmem");//need to aquire lock if accecessing members of kmem
   p = (char*)PGROUNDUP((uint)end);
-  for(; p + PGSIZE <= (char*)PHYSTOP; p += PGSIZE)//increase by page size because that is the boundary
+  for(; p + PGSIZE <= (char*)PHYSTOP; p += PGSIZE){//increase by page size because that is the boundary
+    kmem.ref_cnt[PADDR(p) >> PGSHIFT] = 0;
     kfree(p);
+  }
+   kmem.free_pages = PHYSTOP / PGSIZE;//Divide the pages 
 }
 
 // Free the page of physical memory pointed at by v,
@@ -43,7 +46,7 @@ kinit(void)
 // call to kalloc().  (The exception is when
 // initializing the allocator; see kinit above.)
 void
-kfree(char *v)
+kfree(char *v) 
 {
   struct run *r;
 
@@ -51,15 +54,15 @@ kfree(char *v)
     panic("kfree");//bound check on physical page need to do if getting ref count etc
 
   // Fill with junk to catch dangling refs.
-  memset(v, 1, PGSIZE);
+  //memset(v, 1, PGSIZE); refrencing trashed pages 
 
   acquire(&kmem.lock);
   r = (struct run*)v;
 
-  if(kmem.ref_cnt[PADDR(v) >> PGSHIFT] > 0)//when page is freed dec ref count
+  if(kmem.ref_cnt[PADDR(v) >> PGSHIFT] > 1){//when page is freed dec ref count
     kmem.ref_cnt[PADDR(v) >> PGSHIFT] = kmem.ref_cnt[PADDR(v) >> PGSHIFT] -1;
   
-  if(kmem.ref_cnt[PADDR(v) >> PGSHIFT] == 0){
+  }else{
     memset(v, 1, PGSIZE);
     r->next = kmem.freelist;
     kmem.freelist = r;

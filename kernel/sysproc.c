@@ -92,8 +92,8 @@ sys_uptime(void)
 
 //getFree pg ct helper
 int sys_getFreePagesCount(void){
-//TODO: Return free pages
- return 1;
+
+ return getFreePagesCount();
 
 
 }

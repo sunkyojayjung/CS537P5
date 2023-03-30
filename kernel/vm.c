@@ -330,11 +330,9 @@ bad:
 }
 
 pde_t* cowuvm(pde_t *pgdir, uint sz){
-
 	pde_t *d;
 	pte_t *pte;
 	uint pa, i, flags;
-
 
 	if((d = setupkvm()) == 0) 
 		return 0;
@@ -348,58 +346,71 @@ pde_t* cowuvm(pde_t *pgdir, uint sz){
 		flags = PTE_FLAGS(*pte);
 		pa = PTE_ADDR(*pte);
 		
-		if(mappages(d,(void*)i, PGSIZE, pa, flags) < 0){
-			freevm(d);
-			lcr3(PADDR(pgdir)); //flush tlb
-			return 0;
+		if(mappages(d,(void*)i, PGSIZE, pa, flags) < 0){//set up appropiate mapping so VA points to PA
+			goto bad;  
 		}
-
 		inc_refCount(pa);
 	}
-
-	lcr3(PADDR(pgdir)); //flush tlb
+  lcr3(PADDR(pgdir)); //flush tlb
 	return d;
 
+  bad:
+    freevm(d);
+    lcr3(PADDR(pgdir)); //flush tlb
+		return 0;
 }
 
 // COW pg falt handler
-void COW_pgfault(uint fault){
-	struct proc *p;
-  pte_t *pte;
-	uint va = rcr2(); // getting faulting va
-
-  if(p->UNUSED){
-    p->killed = 1;
-		panic("CoW: Invalid virtual address");
-    
+void COW_pgfault(uint fault, struct proc *p){
+	uint va = (uint)PGROUNDDOWN(rcr2()); // getting faulting va
+  p = proc; 
+  if(p->state == UNUSED){//null  
+		panic("COW_pgfault:No user process PG_FAULT");//address is valid but null because its unused
 	}
 
-  pte = walkpgdir(pgdir,(void*)va, 0);	
+  pte_t *pte;
+  
+  pte = walkpgdir(p->pgdir,(void*)va, 0);	
   //write permissions enabled
-  if(PTE_W & *pte){
-		panic("Already writeable");
-	}else{
-    uint rfCount = get_refCount(va);
-    //check if page has more than one reference
-    if(rfCount > 1){
-      //replace with writeable copy
+  if(PTE_W & *pte){//both bits 1
+		panic( "COW_pgfault: Already writeable");
+	}
 
-      //invalidate tlb 
-
-      //decrement ref count: call dec_refCount how many time the ref count is
-      for(int i = 0; i < rfCount; i++){
-        dec_refCount(va);
-      }
-    }
-    //if there is only one ref
-    else if(rfCount == 1){
-      //just restore write permission for the page
-      *pte = PTE_W;
-      //also invalidate tlb
-    
-    }
+	if((pte == 0) || !(*pte) || !PTE_U || !PTE_P){ // checking if the addr is invalid
+    p->killed = 1;
+    panic("CoW: Invalid virtual address");
+    return;
   }
+    
+  uint pa = PTE_ADDR(*pte); //get physical address
+  uint ref_Count = get_refCount(pa); //get reference count
+  
+      //check if page has less than one reference
+    if(ref_Count < 1){
+      panic("Error: COW_pgfault Reference count must be at least 1");
+    }else if (ref_Count == 1){
+      //page writable 
+      *pte = PTE_W | *pte; //at least 1 bit is 1; restoring write permission to the page
 
+      lcr3(PADDR(p->pgdir));//PTE altered so flush;
+        //TODO: do we need to return or exit here
+      return;
+    }else{
+      //ref_Count > 1 replace with writeable copy
+      char* mem = kalloc(); //get new page
+      if(mem != 0){
+        memmove(mem, (char*)pa, PGSIZE); //copies the existing page to new page we created
+        *pte = PTE_U | PTE_W | PTE_P | PADDR(mem); // add new PTE to the new page
+    
+        dec_refCount(pa);
+        lcr3(PADDR(p->pgdir));//PTE altered so flush;
+        return;
+      }
+      p->killed = 1;
+      return;
+    }
+  
+  
 }
 
 // Map user virtual address to kernel physical address.

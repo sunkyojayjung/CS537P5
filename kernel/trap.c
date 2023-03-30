@@ -47,7 +47,7 @@ trap(struct trapframe *tf)
   switch(tf->trapno){
 	
   case T_PGFLT:
-	  COW_pgfault(tf->err);
+	  COW_pgfault(tf->err, proc);
 	  break;
 
   case T_IRQ0 + IRQ_TIMER:
